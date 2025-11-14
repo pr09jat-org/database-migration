@@ -52,7 +52,7 @@ jobs:
     env:
       DATABASE_URL: ${{ secrets.DB_DSN }} # add DB_URL in each Environment
       MIGRATIONS_PATH: ${{ inputs.migrations_path }}
-      MIGRATE_VERSION: v4.17.1 # pin; bump when you want
+      MIGRATE_VERSION: v4.19.0 # pin; bump when you want
 
     steps:
       - name: Checkout
@@ -67,41 +67,10 @@ jobs:
             echo "Arg             : ${{ inputs.count_or_version }}"
           fi
 
-      - name: Install golang-migrate (CLI) with checksum verify
-        shell: bash
+      - name: Install golang-migrate
         run: |
-          set -euo pipefail
-
-          # Detect OS/Arch and pick the right tarball
-          OS="linux"
-          ARCH="$(uname -m)"
-          case "$ARCH" in
-            x86_64)  TARBALL="migrate.${OS}-amd64.tar.gz" ;;
-            aarch64) TARBALL="migrate.${OS}-arm64.tar.gz" ;;
-            arm64)   TARBALL="migrate.${OS}-arm64.tar.gz" ;;
-            *) echo "Unsupported arch: $ARCH"; exit 1 ;;
-          esac
-
-          BASE="https://github.com/golang-migrate/migrate/releases/download/${MIGRATE_VERSION}"
-
-          curl -sSL -o "/tmp/${TARBALL}" "${BASE}/${TARBALL}"
-          curl -sSL -o /tmp/checksums.txt "${BASE}/checksums.txt"
-
-          # Extract expected checksum (handles both 'hash  filename' and 'hash  *filename')
-          if ! grep -E " [*]?${TARBALL}\$" /tmp/checksums.txt >/tmp/match.txt; then
-            echo "Tarball ${TARBALL} not listed in checksums.txt"
-            echo "Available entries:"
-            sed -n '1,50p' /tmp/checksums.txt
-            exit 1
-          fi
-          EXPECTED="$(awk '{print $1}' /tmp/match.txt)"
-
-          # Verify checksum
-          ( cd /tmp && echo "${EXPECTED}  ${TARBALL}" | sha256sum -c - )
-
-          # Install
-          tar -xzf "/tmp/${TARBALL}" -C /tmp
-          sudo mv /tmp/migrate /usr/local/bin/migrate
+          curl -L https://github.com/golang-migrate/migrate/releases/download/${MIGRATE_VERSION}/migrate.linux-amd64.tar.gz | tar xvz
+          sudo mv migrate /usr/local/bin/
           migrate -version
 
       - name: Run migration
