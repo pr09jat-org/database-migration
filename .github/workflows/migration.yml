@@ -1,0 +1,129 @@
+name: Database Migration
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_env:
+        description: "Environment"
+        type: choice
+        options: [dev, test, production]
+        default: dev
+        required: true
+      operation:
+        description: "Operation (up/down can take optional steps)"
+        type: choice
+        options: [up, down, steps, goto, force, drop]
+        default: up
+        required: true
+      count_or_version:
+        description: "For up/down: steps (int). For steps: +/-N. For goto/force: version (int)."
+        type: string
+        required: false
+      migrations_path:
+        description: "Path to migrations (folder containing *.up.sql/*.down.sql)"
+        type: string
+        required: false
+        default: "database/vast/migrations/revisions"
+      confirm:
+        description: "Type RUN to execute"
+        type: string
+        default: "DRY"
+        required: true
+
+jobs:
+  migrate:
+    name: "${{ inputs.operation }} on ${{ inputs.target_env }}"
+    runs-on: ubuntu-latest
+
+    # Choose the GitHub Environment so we can read its scoped secret(s)
+    environment: ${{ inputs.target_env }}
+
+    # Prevent overlapping runs per env
+    concurrency:
+      group: db-migrate-${{ inputs.target_env }}
+      cancel-in-progress: false
+
+    # Guard: only run if user typed RUN
+    if: ${{ inputs.confirm == 'RUN' }}
+
+    permissions:
+      contents: read
+
+    env:
+      DATABASE_URL: ${{ secrets.DB_DSN }} # add DB_URL in each Environment
+      MIGRATIONS_PATH: ${{ inputs.migrations_path }}
+      MIGRATE_VERSION: v4.17.1 # pin; bump when you want
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show inputs (no secrets)
+        run: |
+          echo "Environment     : ${{ inputs.target_env }}"
+          echo "Operation       : ${{ inputs.operation }}"
+          echo "Migrations path : $MIGRATIONS_PATH"
+          if [ -n "${{ inputs.count_or_version }}" ]; then
+            echo "Arg             : ${{ inputs.count_or_version }}"
+          fi
+
+      - name: Install golang-migrate (CLI) with checksum verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARBALL="migrate.linux-amd64.tar.gz"
+          BASE="https://github.com/golang-migrate/migrate/releases/download/${MIGRATE_VERSION}"
+          curl -sSL -o "/tmp/${TARBALL}" "${BASE}/${TARBALL}"
+          curl -sSL -o /tmp/checksums.txt "${BASE}/checksums.txt"
+          (cd /tmp && grep " ${TARBALL}$" checksums.txt | sha256sum -c -)
+          tar -xzf "/tmp/${TARBALL}" -C /tmp
+          sudo mv /tmp/migrate /usr/local/bin/migrate
+          migrate -version
+
+      - name: Run migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          op="${{ inputs.operation }}"
+          arg="${{ inputs.count_or_version || '' }}"
+          db="$DATABASE_URL"
+          path="$MIGRATIONS_PATH"
+
+          if [[ -z "$db" ]]; then
+            echo "DATABASE_URL is empty (check environment-scoped secret DB_URL)"; exit 1
+          fi
+
+          case "$op" in
+            up)
+              if [[ -n "$arg" ]]; then
+                migrate -verbose -path "$path" -database "$db" up "$arg"
+              else
+                migrate -verbose -path "$path" -database "$db" up
+              fi
+              ;;
+            down)
+              if [[ -n "$arg" ]]; then
+                migrate -verbose -path "$path" -database "$db" down "$arg"
+              else
+                migrate -verbose -path "$path" -database "$db" down
+              fi
+              ;;
+            steps)
+              if [[ -z "$arg" ]]; then echo "count_or_version (steps) required for 'steps'"; exit 1; fi
+              migrate -verbose -path "$path" -database "$db" steps "$arg"
+              ;;
+            goto)
+              if [[ -z "$arg" ]]; then echo "count_or_version (version) required for 'goto'"; exit 1; fi
+              migrate -verbose -path "$path" -database "$db" goto "$arg"
+              ;;
+            force)
+              if [[ -z "$arg" ]]; then echo "count_or_version (version) required for 'force'"; exit 1; fi
+              migrate -verbose -path "$path" -database "$db" force "$arg"
+              ;;
+            drop)
+              migrate -verbose -path "$path" -database "$db" drop -f
+              ;;
+            *)
+              echo "Unknown operation: $op"; exit 1
+              ;;
+          esac
