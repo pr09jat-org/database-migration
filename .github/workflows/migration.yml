@@ -33,7 +33,7 @@ on:
 jobs:
   migrate:
     name: "${{ inputs.operation }} on ${{ inputs.target_env }}"
-    runs-on: [self-hosted, linux, db-migrate]
+    runs-on: ubuntu-latest
 
     # Choose the GitHub Environment so we can read its scoped secret(s)
     environment: ${{ inputs.target_env }}
