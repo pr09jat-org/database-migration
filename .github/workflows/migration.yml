@@ -72,11 +72,17 @@ jobs:
           curl -L https://github.com/golang-migrate/migrate/releases/download/${MIGRATE_VERSION}/migrate.linux-amd64.tar.gz | tar xvz
           sudo mv migrate /usr/local/bin/
           migrate -version
-      - name: Connect to Tailscale
-        uses: tailscale/github-action@v4
-        with:
-          authkey: ${{ secrets.TS_AUTHKEY }}
-          args: --accept-routes
+      - name: Start OpenVPN
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y && sudo apt-get install -y openvpn
+          echo "${{ secrets.OVPN_B64 }}" | base64 -d > corp.ovpn
+          printf "%s\n%s\n" "${{ secrets.VPN_USER }}" "${{ secrets.VPN_PASS }}" > auth.txt
+          sudo openvpn --config corp.ovpn --auth-user-pass auth.txt --daemon
+          sleep 6
+      - name: Verify DB reachable
+        run: timeout 5 bash -lc ">/dev/tcp/10.10.9.11/5432" && echo OK
 
       - name: Run migration
         shell: bash
