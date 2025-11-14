@@ -71,11 +71,35 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          TARBALL="migrate.linux-amd64.tar.gz"
+
+          # Detect OS/Arch and pick the right tarball
+          OS="linux"
+          ARCH="$(uname -m)"
+          case "$ARCH" in
+            x86_64)  TARBALL="migrate.${OS}-amd64.tar.gz" ;;
+            aarch64) TARBALL="migrate.${OS}-arm64.tar.gz" ;;
+            arm64)   TARBALL="migrate.${OS}-arm64.tar.gz" ;;
+            *) echo "Unsupported arch: $ARCH"; exit 1 ;;
+          esac
+
           BASE="https://github.com/golang-migrate/migrate/releases/download/${MIGRATE_VERSION}"
+
           curl -sSL -o "/tmp/${TARBALL}" "${BASE}/${TARBALL}"
           curl -sSL -o /tmp/checksums.txt "${BASE}/checksums.txt"
-          (cd /tmp && grep " ${TARBALL}$" checksums.txt | sha256sum -c -)
+
+          # Extract expected checksum (handles both 'hash  filename' and 'hash  *filename')
+          if ! grep -E " [*]?${TARBALL}\$" /tmp/checksums.txt >/tmp/match.txt; then
+            echo "Tarball ${TARBALL} not listed in checksums.txt"
+            echo "Available entries:"
+            sed -n '1,50p' /tmp/checksums.txt
+            exit 1
+          fi
+          EXPECTED="$(awk '{print $1}' /tmp/match.txt)"
+
+          # Verify checksum
+          ( cd /tmp && echo "${EXPECTED}  ${TARBALL}" | sha256sum -c - )
+
+          # Install
           tar -xzf "/tmp/${TARBALL}" -C /tmp
           sudo mv /tmp/migrate /usr/local/bin/migrate
           migrate -version
